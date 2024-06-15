@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopee Chat</title>
+    <!-- 引入Bootstrap CSS文件 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* 自定义的CSS样式 */
+        .fixed-button {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .chat-box {
+            position: fixed;
+            bottom: 0;
+            right: 20px;
+            width: 300px;
+            background-color: #f3f3f3;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            display: none; /* 默认隐藏聊天框 */
+            padding: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .user-list {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+        .user-list li {
+            padding: 8px;
+            margin-bottom: 5px;
+            background-color: #fff;
+            cursor: pointer;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+        }
+        .user-list li:hover {
+            background-color: #f0f0f0;
+        }
+        .user-list li.selected {
+            background-color: #007bff;
+            color: white;
+        }
+        .chat-messages {
+            list-style-type: none;
+            padding: 0;
+            margin: 10px 0 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .chat-messages li {
+            padding: 5px 10px;
+            background-color: #e9ecef;
+            margin-bottom: 5px;
+            border-radius: 3px;
+        }
+        .chat-input {
+            display: flex;
+            margin-top: 10px;
+        }
+        .chat-input input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px 0 0 3px;
+        }
+        .chat-input button {
+            padding: 8px 15px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            border-radius: 0 3px 3px 0;
+            cursor: pointer;
+        }
+      
+        #logoutBtn {
+            height: 50px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="fixed-button" id="chatToggle">聊天室</div>
+        <div class="fixed-button" style="top: 20px; right: 20px;" id="logoutBtn">登出</div>
+    </div>
+
+    <div id="chatBox" class="chat-box">
+        <h3>店家</h3>
+        <ul id="userList" class="user-list"></ul>
+        <h3>聊天室</h3>
+        <ul id="messages" class="chat-messages"></ul>
+        <div class="chat-input">
+            <input id="input" autocomplete="off" placeholder="請輸入訊息..." />
+            <button id="sendBtn">送出</button>
+        </div>
+    </div>
+
+    <!-- 引入Bootstrap的JavaScript依赖（Popper.js和Bootstrap JavaScript插件） -->
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.min.js"></script>
+    <!-- 引入Socket.io客户端库 -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket;
+        let receiverId;  // 定义接收者ID
+
+        // 点击“Select User”按钮显示聊天框
+        document.getElementById('chatToggle').addEventListener('click', () => {
+            document.getElementById('chatBox').style.display = 'block';
+            loadUsers();
+        });
+
+        // 点击“Logout”按钮执行退出操作
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('token');  // 清除本地存储的令牌
+            window.location.href = '/login.html';  // 重定向到登录页面
+        });
+
+        // 发送消息按钮点击事件
+        document.getElementById('sendBtn').addEventListener('click', () => {
+            const input = document.getElementById('input');
+            if (input.value && receiverId) {
+                socket.emit('chat message', { receiver_id: receiverId, message: input.value });
+                input.value = '';
+            } else {
+                alert('Please select a user to chat with');
+            }
+        });
+
+        // 加载用户列表
+        async function loadUsers() {
+            const response = await fetch('/auth/users', {
+                headers: {
+                    'Authorization': localStorage.getItem('token')
+                }
+            });
+            const users = await response.json();
+            const userList = document.getElementById('userList');
+            userList.innerHTML = '';
+            users.forEach(user => {
+                if (user.id !== getUserId()) {  // 排除当前登录用户
+                    const li = document.createElement('li');
+                    li.textContent = user.username;
+                    li.addEventListener('click', () => {
+                        receiverId = user.id;
+                        alert(`Chatting with ${user.username}`);
+                        loadChatHistory(receiverId); // 加载与选定用户的聊天历史
+                    });
+                    userList.appendChild(li);
+                }
+            });
+        }
+
+        // 解析JWT令牌获取用户ID
+        function getUserId() {
+            const token = localStorage.getItem('token');
+            if (!token) return null;
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            return payload.id;
+        }
+
+        // 建立Socket连接并处理接收到的消息
+        function startChat() {
+            const token = localStorage.getItem('token');
+            socket = io({ auth: { token } });
+
+            socket.on('chat message', (msg) => {
+                const item = document.createElement('li');
+                item.textContent = `${msg.username}: ${msg.message}`;
+                document.getElementById('messages').appendChild(item);
+                document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+            });
+
+            socket.on('connect_error', (err) => {
+                alert(err.message);
+            });
+        }
+
+        // 加载与选定用户的聊天历史
+        async function loadChatHistory(receiverId) {
+            try {
+                const response = await fetch(`/auth/messages/${receiverId}`, {
+                    headers: {
+                        'Authorization': localStorage.getItem('token')
+                    }
+                });
+                const messages = await response.json();
+                displayChatHistory(messages);
+            } catch (error) {
+                console.error('Error loading chat history:', error);
+            }
+        }
+
+        // 显示历史消息
+        function displayChatHistory(messages) {
+            const messagesList = document.getElementById('messages');
+            messagesList.innerHTML = ''; // 清空现有消息列表
+            messages.forEach(msg => {
+                const item = document.createElement('li');
+                item.textContent = `${msg.username}: ${msg.message}`;
+                messagesList.appendChild(item);
+            });
+            // 滚动到底部显示最新消息
+            messagesList.scrollTop = messagesList.scrollHeight;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            startChat(); // 初始化聊天功能
+        });
+
+    </script>
+</body>
+</html>
